@@ -12,13 +12,13 @@ The model provides the exact text to find (`oldText`) and its replacement (`newT
 
 **Pain points:** For large blocks (50+ lines), the model must reproduce every token correctly. One wrong character and the edit fails. Even on success, thousands of output tokens are wasted on text the user never sees — the model is just echoing the file back.
 
-### 2. Hash-anchored lines (pi-hashline-edit)
+### 2. Hash-anchored lines (oh-my-pi)
 
 Lines carry content hashes. Edits reference `LINE#HASH` anchors instead of repeating content. Eliminates long `oldText`.
 
 **Pain points:** Introduces stale anchors — if the file changes between read and edit, anchors break. Agents struggle with boundary lines: the same line appearing as both `+` in one diff and context in the next produces duplicate or missing lines. Hash anchors also don't compose well with chain-of-thought or editing without a prior read.
 
-### 3. Diff-based edits
+### 3. Diff-based (OpenAI Codex)
 
 The model outputs a unified diff. Clean and token-efficient.
 
