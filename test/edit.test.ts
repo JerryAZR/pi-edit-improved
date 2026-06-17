@@ -403,4 +403,119 @@ describe("executeEdit", () => {
       expect(await readFile(path, "utf-8")).toBe("A\nREPLACED\nB\n");
     });
   });
+
+  // ── Fuzzy matching (normalized) ───────────────────────
+
+  it("fuzzy: trailing whitespace mismatch → succeeds via normalization", async () => {
+    await withTempFile("hello   \nworld  \nfoo\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "hello\nworld\n", newText: "HELLO\nWORLD\n" }] },
+        cwd,
+      );
+      // Trailing whitespace in the matched region is normalized, replacement applied
+      expect(await readFile(path, "utf-8")).toBe("HELLO\nWORLD\nfoo\n");
+    });
+  });
+
+  it("fuzzy: smart quotes in file vs ASCII in oldText → succeeds", async () => {
+    await withTempFile("before\nconsole.log(\u201Chello\u201D)\nafter\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: 'console.log("hello")\n', newText: "console.log('hi')\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("before\nconsole.log('hi')\nafter\n");
+    });
+  });
+
+  it("fuzzy: unicode dash in file vs ASCII hyphen in oldText → succeeds", async () => {
+    await withTempFile("before\nconst x = a\u2013b;\nafter\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "const x = a-b;\n", newText: "const x = a + b;\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("before\nconst x = a + b;\nafter\n");
+    });
+  });
+
+  it("fuzzy: normalized match still requires uniqueness → throws", async () => {
+    await withTempFile("hello   \nworld\nhello   \nworld\n", async (path) => {
+      await expect(
+        executeEdit({ path, edits: [{ oldText: "hello\nworld\n", newText: "X\n" }] }, cwd),
+      ).rejects.toThrow(/multiple occurrences/);
+    });
+  });
+
+  it("fuzzy: normalized match not found → throws", async () => {
+    await withTempFile("hello\nworld\n", async (path) => {
+      await expect(
+        executeEdit({ path, edits: [{ oldText: "zzzzz\n", newText: "X\n" }] }, cwd),
+      ).rejects.toThrow(/Could not find/);
+    });
+  });
+
+  it("fuzzy: mixed exact and fuzzy edits in batch → all succeed", async () => {
+    await withTempFile("AAA   \nBBB\nCCC\n", async (path) => {
+      await executeEdit(
+        {
+          path,
+          edits: [
+            { oldText: "AAA\n", newText: "aaa\n" }, // fuzzy (trailing whitespace)
+            { oldText: "CCC\n", newText: "ccc\n" }, // exact
+          ],
+        },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\n");
+    });
+  });
+
+  it("fuzzy: NFKC fullwidth punctuation → matches halfwidth oldText", async () => {
+    // File has fullwidth comma (U+FF0C) and fullwidth parens (U+FF08, U+FF09)
+    await withTempFile("\u4F60\u597D\uFF0C\u4E16\u754C\n\u4F60\u597D\uFF08\u4E16\u754C\uFF09\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "\u4F60\u597D,\u4E16\u754C\n\u4F60\u597D(\u4E16\u754C)\n", newText: "\u4F60\u597D\uFF0Cpi\n\u4F60\u597D(pi)\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("\u4F60\u597D\uFF0Cpi\n\u4F60\u597D(pi)\n");
+    });
+  });
+
+  it("fuzzy: NFKC compatibility forms → fullwidth letters and combining accents", async () => {
+    // File has fullwidth ABC123 (U+FF21-FF23, U+FF11-FF13) and combining accent (e + U+0301)
+    await withTempFile("\uFF21\uFF22\uFF23\uFF11\uFF12\uFF13\ncafe\u0301\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "ABC123\ncaf\u00E9\n", newText: "XYZ789\ncoffee\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("XYZ789\ncoffee\n");
+    });
+  });
+
+  it("fuzzy: non-breaking space → matches regular space in oldText", async () => {
+    await withTempFile("hello\u00A0world\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "hello world\n", newText: "hello universe\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("hello universe\n");
+    });
+  });
+
+  it("fuzzy: LF oldText matches against CRLF file content", async () => {
+    await withTempFile("line one\r\nline two\r\nline three\r\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "line two\n", newText: "replaced line\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("line one\r\nreplaced line\r\nline three\r\n");
+    });
+  });
+
+  it("fuzzy: detects duplicates across CRLF/LF variants", async () => {
+    await withTempFile("hello\r\nworld\r\n---\r\nhello\nworld\n", async (path) => {
+      await expect(
+        executeEdit({ path, edits: [{ oldText: "hello\nworld\n", newText: "replaced\n" }] }, cwd),
+      ).rejects.toThrow(/multiple occurrences/);
+    });
+  });
 });

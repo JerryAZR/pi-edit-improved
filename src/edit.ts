@@ -7,6 +7,7 @@ import { findAllPositions } from "./find-positions.js";
 import { matchUniqueRegion } from "./match-region.js";
 import { stripBom } from "./bom.js";
 import { detectLineEnding, normalizeToLF, restoreLineEndings } from "./line-endings.js";
+import { normalizeForFuzzyMatch, fuzzyFindText, countOccurrences } from "./fuzzy-match.js";
 
 // ── Schema ──────────────────────────────────────────────────
 
@@ -277,30 +278,41 @@ function resolveExactEdit(
     throw new Error(`edits[${editIndex}].oldText must not be empty.`);
   }
 
-
+  // Try exact match first
   const idx = content.indexOf(oldText);
-  if (idx === -1) {
-    throw new Error(
-      `Could not find oldText for edits[${editIndex}]. ` +
-      `The text must match exactly including all whitespace and newlines.`,
-    );
-  }
-
-  // Check uniqueness
-  const secondIdx = content.indexOf(oldText, idx + 1);
-  if (secondIdx !== -1) {
+  if (idx !== -1) {
+    const secondIdx = content.indexOf(oldText, idx + 1);
+    if (secondIdx === -1) {
+      return { start: idx, end: idx + oldText.length, newText, editIndex };
+    }
     throw new Error(
       `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
       `The text must be unique. Provide more context to make it unique, or use ... to span a large region.`,
     );
   }
 
-  return {
-    start: idx,
-    end: idx + oldText.length,
-    newText,
-    editIndex,
-  };
+  // Try normalized match
+  const match = fuzzyFindText(content, oldText);
+  if (match.found) {
+    const occurrences = countOccurrences(content, oldText);
+    if (occurrences > 1) {
+      throw new Error(
+        `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
+        `The text must be unique. Provide more context to make it unique, or use ... to span a large region.`,
+      );
+    }
+    return {
+      start: match.index,
+      end: match.index + match.matchLength,
+      newText,
+      editIndex,
+    };
+  }
+
+  throw new Error(
+    `Could not find oldText for edits[${editIndex}]. ` +
+    `The text must match exactly including all whitespace and newlines.`,
+  );
 }
 
 // ── Validate non-overlapping regions ───────────────────────
@@ -367,13 +379,39 @@ export async function executeEdit(
     // Strip BOM, normalize line endings
     const { bom, text } = stripBom(rawContent);
     const originalEnding = detectLineEnding(text);
-    const content = normalizeToLF(text);
+    const originalContent = normalizeToLF(text);
+
+    // Pre-scan: check if any edit needs normalized matching
+    let needsNormalization = false;
+    const normalizedEdits = edits.map((edit) => ({
+      ...edit,
+      oldText: normalizeToLF(edit.oldText),
+      newText: normalizeToLF(edit.newText),
+    }));
+    for (const edit of normalizedEdits) {
+      if (originalContent.indexOf(edit.oldText) === -1) {
+        const fuzzyContent = normalizeForFuzzyMatch(originalContent);
+        const fuzzyOldText = normalizeForFuzzyMatch(edit.oldText);
+        if (fuzzyContent.indexOf(fuzzyOldText) !== -1) {
+          needsNormalization = true;
+          break;
+        }
+      }
+    }
+
+    // If normalization is needed, re-base all content to normalized space
+    const content = needsNormalization
+      ? normalizeForFuzzyMatch(originalContent)
+      : originalContent;
+    const activeEdits = needsNormalization
+      ? normalizedEdits.map((e) => ({ ...e, oldText: normalizeForFuzzyMatch(e.oldText), newText: e.newText }))
+      : normalizedEdits;
 
     // Resolve each edit to a region
     const resolved: ResolvedEdit[] = [];
     let longExactCount = 0;
-    for (let i = 0; i < edits.length; i++) {
-      const edit = edits[i];
+    for (let i = 0; i < activeEdits.length; i++) {
+      const edit = activeEdits[i];
       const r = resolveEdit(content, edit, i);
       const existing = content.substring(r.start, r.end);
       if (existing === r.newText) {
@@ -394,7 +432,7 @@ export async function executeEdit(
         content: [
           {
             type: "text",
-            text: `No changes made to ${path}. All ${edits.length} edit(s) produced identical content.`,
+            text: `No changes made to ${path}. All ${activeEdits.length} edit(s) produced identical content.`,
           },
         ],
         details: { diff: "" },
@@ -411,11 +449,11 @@ export async function executeEdit(
     const finalContent = bom + restoreLineEndings(newContent, originalEnding);
     await writeFile(path, finalContent, "utf-8");
 
-    // Generate diff
-    const diff = generateDiff(path, content, newContent);
+    // Generate diff against original (pre-normalization) content so only actual edits show
+    const diff = generateDiff(path, originalContent, newContent);
 
     const applied = resolved.length;
-    const skipped = edits.length - applied;
+    const skipped = activeEdits.length - applied;
     const skipNote = skipped > 0 ? ` (${skipped} edit(s) were no-ops)` : "";
     const longNote = longExactCount > 0
       ? ` (tip: use '...' in oldText to abbreviate large blocks)`
