@@ -1,0 +1,40 @@
+{
+  "name": "pi-context-edit",
+  "version": "0.1.0",
+  "description": "Context-bounded edit tool for pi — replaces regions identified by surrounding context lines.",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.ts",
+    "src",
+    "tool-descriptions"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": ["pi-package", "pi", "coding-agent", "extension"],
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@earendil-works/pi-tui": "*"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "typebox": "^1.2.10"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.79.4",
+    "@earendil-works/pi-tui": "^0.79.4",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
