@@ -8,6 +8,7 @@ import { matchUniqueRegion } from "./match-region.js";
 import { stripBom } from "./bom.js";
 import { detectLineEnding, normalizeToLF, restoreLineEndings } from "./line-endings.js";
 import { normalizeForFuzzyMatch, fuzzyFindText, countOccurrences } from "./fuzzy-match.js";
+import { findBestLineMatch } from "./distance-match.js";
 
 // ── Schema ──────────────────────────────────────────────────
 
@@ -307,6 +308,23 @@ function resolveExactEdit(
       newText,
       editIndex,
     };
+  }
+
+  // Try distance-based match
+  const distanceMatch = findBestLineMatch(content, oldText);
+  if (distanceMatch.found) {
+    return {
+      start: distanceMatch.start,
+      end: distanceMatch.end,
+      newText,
+      editIndex,
+    };
+  }
+  if (distanceMatch.ambiguous) {
+    throw new Error(
+      `Found multiple similar regions for edits[${editIndex}]. ` +
+      `Provide more context to make the region unique.`,
+    );
   }
 
   throw new Error(

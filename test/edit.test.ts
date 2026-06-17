@@ -518,4 +518,43 @@ describe("executeEdit", () => {
       ).rejects.toThrow(/multiple occurrences/);
     });
   });
+
+  // ── Distance-based fuzzy matching ──────────────────────
+
+  it("distance: typo in oldText (1 char wrong) → succeeds", async () => {
+    await withTempFile("function hello() {\n  console.log('hi');\n}\n", async (path) => {
+      await executeEdit(
+        { path, edits: [{ oldText: "  console.log('hi');\n", newText: "  console.log('bye');\n" }] },
+        cwd,
+      );
+      // Even with typo in oldText, it should find and replace
+    });
+  });
+
+  it("distance: typo in oldText (1 char substitution) → succeeds via distance match", async () => {
+    await withTempFile("const greeting = 'hello world';\nconsole.log(greeting);\n", async (path) => {
+      // Typo: "wrold" instead of "world"
+      await executeEdit(
+        { path, edits: [{ oldText: "const greeting = 'hello wrold';\n", newText: "const greeting = 'hello universe';\n" }] },
+        cwd,
+      );
+      expect(await readFile(path, "utf-8")).toBe("const greeting = 'hello universe';\nconsole.log(greeting);\n");
+    });
+  });
+
+  it("distance: multiple similar regions → throws ambiguous", async () => {
+    await withTempFile("foo bar\nfoo bar\n", async (path) => {
+      await expect(
+        executeEdit({ path, edits: [{ oldText: "foo baz\n", newText: "replaced\n" }] }, cwd),
+      ).rejects.toThrow(/multiple similar regions/);
+    });
+  });
+
+  it("distance: distance exceeds threshold → throws not found", async () => {
+    await withTempFile("completely different\n", async (path) => {
+      await expect(
+        executeEdit({ path, edits: [{ oldText: "xyz xyz xyz xyz\n", newText: "replaced\n" }] }, cwd),
+      ).rejects.toThrow(/Could not find/);
+    });
+  });
 });
