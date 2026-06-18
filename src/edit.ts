@@ -84,6 +84,7 @@ function resolveEdit(
   const newText = normalizeToLF(edit.newText);
 
   // Try exact match first — the file might literally contain "..."
+  // Try exact match first — the file might literally contain "..."
   if (oldText.length > 0) {
     const idx = content.indexOf(oldText);
     if (idx !== -1) {
@@ -91,8 +92,11 @@ function resolveEdit(
       if (secondIdx === -1) {
         return { start: idx, end: idx + oldText.length, newText, editIndex };
       }
-      // Exact match found but not unique — let the ellipsis fallback handle it if applicable,
-      // otherwise fall through to the error below
+      // Exact match found but not unique — do NOT fall through to ellipsis
+      throw new Error(
+        `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
+        `The text must be unique. Provide more context to make it unique.`,
+      );
     }
   }
 
