@@ -169,6 +169,9 @@ function resolveMultiSegmentEdit(
   newText: string,
   editIndex: number,
 ): ResolvedEdit {
+  // 2 segments uses matchUniqueRegion (O(A+B) with position intersection).
+  // 3+ segments requires the DP approach below (generalized ordered subsequence matching).
+  // These are intentionally different algorithms — matchUniqueRegion is faster for 2 anchors.
   // segments always has ≥ 2 entries (before first ... + after last ..., even if empty strings)
   if (segments.length === 2) {
     return resolveContextEdit(content, segments[0], segments[1], newText, editIndex);
@@ -224,13 +227,6 @@ function resolveMultiSegmentEdit(
   }
 
   // All final candidates must be the same range
-  if (pairs.length === 0) {
-    throw new Error(
-      `Could not find a region matching the given context for edits[${editIndex}]. ` +
-      `Ensure the segments match exactly including whitespace.`,
-    );
-  }
-
   const first = pairs[0];
   for (let i = 1; i < pairs.length; i++) {
     if (pairs[i].firstStart !== first.firstStart || pairs[i].lastEnd !== first.lastEnd) {
@@ -371,6 +367,8 @@ export async function executeEdit(
     const originalContent = normalizeToLF(text);
 
     // Pre-scan: check if any edit needs normalized matching
+    // Cache the normalized content since normalizeForFuzzyMatch is expensive
+    const fuzzyContent = normalizeForFuzzyMatch(originalContent);
     let needsNormalization = false;
     const normalizedEdits = edits.map((edit) => ({
       ...edit,
@@ -379,7 +377,6 @@ export async function executeEdit(
     }));
     for (const edit of normalizedEdits) {
       if (originalContent.indexOf(edit.oldText) === -1) {
-        const fuzzyContent = normalizeForFuzzyMatch(originalContent);
         const fuzzyOldText = normalizeForFuzzyMatch(edit.oldText);
         if (fuzzyContent.indexOf(fuzzyOldText) !== -1) {
           needsNormalization = true;
@@ -388,10 +385,8 @@ export async function executeEdit(
       }
     }
 
-    // If normalization is needed, re-base all content to normalized space
-    const content = needsNormalization
-      ? normalizeForFuzzyMatch(originalContent)
-      : originalContent;
+    // If normalization is needed, use the cached fuzzy content
+    const content = needsNormalization ? fuzzyContent : originalContent;
     const activeEdits = needsNormalization
       ? normalizedEdits.map((e) => ({ ...e, oldText: normalizeForFuzzyMatch(e.oldText), newText: e.newText }))
       : normalizedEdits;

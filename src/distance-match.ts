@@ -96,6 +96,7 @@ export function findBestLineMatch(
 	const maxWindow = Math.min(contentLines.length, m + lineTolerance);
 
 	let best: Candidate | null = null;
+	const withinThreshold: Candidate[] = [];
 
 	for (let w = minWindow; w <= maxWindow; w++) {
 		for (let i = 0; i + w <= contentLines.length; i++) {
@@ -103,8 +104,10 @@ export function findBestLineMatch(
 			const d = distance(windowText, oldText);
 
 			if (d <= threshold) {
+				const candidate: Candidate = { startLine: i, endLine: i + w, distance: d };
+				withinThreshold.push(candidate);
 				if (best === null || d < best.distance) {
-					best = { startLine: i, endLine: i + w, distance: d };
+					best = candidate;
 				}
 			}
 		}
@@ -121,24 +124,17 @@ export function findBestLineMatch(
 		return { found: true, start, end, distance: 0, ambiguous: false };
 	}
 
-	// Check for ambiguity: other windows with similar distance
-	let ambiguousCount = 0;
-	for (let w = minWindow; w <= maxWindow; w++) {
-		for (let i = 0; i + w <= contentLines.length; i++) {
-			if (i === best.startLine && w === best.endLine - best.startLine) {
-				continue;
-			}
-			const windowText = contentLines.slice(i, i + w).join("\n") + "\n";
-			const d = distance(windowText, oldText);
-			if (d <= best.distance + uniquenessMargin) {
-				ambiguousCount++;
-				if (ambiguousCount > 0) break;
-			}
+	// Check for ambiguity: other within-threshold windows with similar distance
+	let ambiguous = false;
+	for (const c of withinThreshold) {
+		if (c === best) continue;
+		if (c.distance <= best.distance + uniquenessMargin) {
+			ambiguous = true;
+			break;
 		}
-		if (ambiguousCount > 0) break;
 	}
 
-	if (ambiguousCount > 0) {
+	if (ambiguous) {
 		return {
 			found: false,
 			start: -1,

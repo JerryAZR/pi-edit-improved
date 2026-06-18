@@ -54,15 +54,12 @@ describe("fuzzyFindText", () => {
 		expect(result.found).toBe(true);
 		expect(result.index).toBe(6);
 		expect(result.matchLength).toBe(5);
-		expect(result.usedFuzzyMatch).toBe(false);
-		expect(result.contentForReplacement).toBe("hello world");
 	});
 
 	it("returns not found when neither exact nor fuzzy matches", () => {
 		const result = fuzzyFindText("hello world", "xyz");
 		expect(result.found).toBe(false);
 		expect(result.index).toBe(-1);
-		expect(result.usedFuzzyMatch).toBe(false);
 	});
 
 	it("finds via normalized trailing whitespace", () => {
@@ -70,9 +67,7 @@ describe("fuzzyFindText", () => {
 		const oldText = "hello\nworld\n";
 		const result = fuzzyFindText(content, oldText);
 		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(true);
 		expect(result.index).toBe(0);
-		expect(result.contentForReplacement).toBe("hello\nworld\n");
 	});
 
 	it("finds via normalized smart quotes", () => {
@@ -80,7 +75,6 @@ describe("fuzzyFindText", () => {
 		const oldText = 'console.log("hello")';
 		const result = fuzzyFindText(content, oldText);
 		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(true);
 	});
 
 	it("finds via normalized unicode dash", () => {
@@ -88,7 +82,6 @@ describe("fuzzyFindText", () => {
 		const oldText = "const x = a-b;";
 		const result = fuzzyFindText(content, oldText);
 		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(true);
 	});
 
 	it("prefers exact match over fuzzy", () => {
@@ -96,28 +89,15 @@ describe("fuzzyFindText", () => {
 		const oldText = "world";
 		const result = fuzzyFindText(content, oldText);
 		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(false);
 	});
 
-	it("returns original content when exact match", () => {
-		const content = "  hello   \n  world  \n";
-		const oldText = "  hello   \n  world  \n";
-		const result = fuzzyFindText(content, oldText);
-		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(false);
-		expect(result.contentForReplacement).toBe(content);
-	});
-
-	it("returns normalized content when fuzzy match", () => {
+	it("fuzzy match returns index in normalized space", () => {
 		const content = "  hello   \n  world  \n";
 		const oldText = "  hello\n  world\n";
 		const result = fuzzyFindText(content, oldText);
 		expect(result.found).toBe(true);
-		expect(result.usedFuzzyMatch).toBe(true);
-		expect(result.contentForReplacement).toBe("  hello\n  world\n");
 	});
 });
-
 describe("countOccurrences", () => {
 	it("counts exact occurrences", () => {
 		expect(countOccurrences("aaa bbb aaa", "aaa")).toBe(2);

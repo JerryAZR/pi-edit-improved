@@ -33,24 +33,16 @@ export function normalizeForFuzzyMatch(text: string): string {
 export interface FuzzyMatchResult {
 	/** Whether a match was found */
 	found: boolean;
-	/** Start index of the match in the content used for replacement */
+	/** Start index of the match in the content */
 	index: number;
 	/** Length of the matched text */
 	matchLength: number;
-	/** Whether normalized matching was used (false = exact match) */
-	usedFuzzyMatch: boolean;
-	/**
-	 * The content to use for replacement operations.
-	 * When exact match: original content. When fuzzy match: normalized content.
-	 */
-	contentForReplacement: string;
 }
 
 /**
  * Find oldText in content, trying exact match first, then normalized match.
- * When normalized matching is used, the returned contentForReplacement is the
- * normalized version of the content (trailing whitespace stripped, Unicode
- * quotes/dashes/spaces normalized to ASCII).
+ * When a normalized match is used, the match position and length refer to
+ * the normalized content.
  */
 export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
 	const exactIndex = content.indexOf(oldText);
@@ -59,8 +51,6 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 			found: true,
 			index: exactIndex,
 			matchLength: oldText.length,
-			usedFuzzyMatch: false,
-			contentForReplacement: content,
 		};
 	}
 
@@ -69,21 +59,13 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
 
 	if (fuzzyIndex === -1) {
-		return {
-			found: false,
-			index: -1,
-			matchLength: 0,
-			usedFuzzyMatch: false,
-			contentForReplacement: content,
-		};
+		return { found: false, index: -1, matchLength: 0 };
 	}
 
 	return {
 		found: true,
 		index: fuzzyIndex,
 		matchLength: fuzzyOldText.length,
-		usedFuzzyMatch: true,
-		contentForReplacement: fuzzyContent,
 	};
 }
 
