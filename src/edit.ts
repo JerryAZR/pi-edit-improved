@@ -79,9 +79,10 @@ function resolveEdit(
   content: string,
   edit: ReplaceEditItem,
   editIndex: number,
+  normalizedContent: boolean,
 ): ResolvedEdit {
-  const oldText = normalizeToLF(edit.oldText);
-  const newText = normalizeToLF(edit.newText);
+  const oldText = edit.oldText;  // already normalizeToLF'd (and normalizeForFuzzyMatch'd if needed)
+  const newText = edit.newText;  // already normalizeToLF'd
 
   if (oldText.length === 0) {
     throw new Error(`edits[${editIndex}].oldText must not be empty.`);
@@ -100,39 +101,42 @@ function resolveEdit(
     return { start: idx, end: idx + oldText.length, newText, editIndex };
   }
 
-  // 2. Normalized (fuzzy) match — tolerates trailing whitespace, smart quotes, Unicode dashes
-  const fuzzyMatch = fuzzyFindText(content, oldText);
-  if (fuzzyMatch.found) {
-    const occurrences = countOccurrences(content, oldText);
-    if (occurrences > 1) {
+  // 2. Fuzzy match — only when content is NOT pre-normalized
+  //    (when pre-normalized, exact match above IS the fuzzy match)
+  if (!normalizedContent) {
+    const fuzzyMatch = fuzzyFindText(content, oldText);
+    if (fuzzyMatch.found) {
+      const occurrences = countOccurrences(content, oldText);
+      if (occurrences > 1) {
+        throw new Error(
+          `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
+          `The text must be unique. Provide more context to make it unique.`,
+        );
+      }
+      return {
+        start: fuzzyMatch.index,
+        end: fuzzyMatch.index + fuzzyMatch.matchLength,
+        newText,
+        editIndex,
+      };
+    }
+
+    // 3. Distance (Levenshtein) match — tolerates small typos
+    const distanceMatch = findBestLineMatch(content, oldText);
+    if (distanceMatch.found) {
+      return {
+        start: distanceMatch.start,
+        end: distanceMatch.end,
+        newText,
+        editIndex,
+      };
+    }
+    if (distanceMatch.ambiguous) {
       throw new Error(
-        `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
-        `The text must be unique. Provide more context to make it unique.`,
+        `Found multiple similar regions for edits[${editIndex}]. ` +
+        `Provide more context to make the region unique.`,
       );
     }
-    return {
-      start: fuzzyMatch.index,
-      end: fuzzyMatch.index + fuzzyMatch.matchLength,
-      newText,
-      editIndex,
-    };
-  }
-
-  // 3. Distance (Levenshtein) match — tolerates small typos
-  const distanceMatch = findBestLineMatch(content, oldText);
-  if (distanceMatch.found) {
-    return {
-      start: distanceMatch.start,
-      end: distanceMatch.end,
-      newText,
-      editIndex,
-    };
-  }
-  if (distanceMatch.ambiguous) {
-    throw new Error(
-      `Found multiple similar regions for edits[${editIndex}]. ` +
-      `Provide more context to make the region unique.`,
-    );
   }
 
   // 4. Ellipsis — split on "..." lines into anchored segments
@@ -397,7 +401,7 @@ export async function executeEdit(
     let longExactCount = 0;
     for (let i = 0; i < activeEdits.length; i++) {
       const edit = activeEdits[i];
-      const r = resolveEdit(content, edit, i);
+      const r = resolveEdit(content, edit, i, needsNormalization);
       const existing = content.substring(r.start, r.end);
       if (existing === r.newText) {
         continue;
