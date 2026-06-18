@@ -83,24 +83,59 @@ function resolveEdit(
   const oldText = normalizeToLF(edit.oldText);
   const newText = normalizeToLF(edit.newText);
 
-  // Try exact match first — the file might literally contain "..."
-  // Try exact match first — the file might literally contain "..."
-  if (oldText.length > 0) {
-    const idx = content.indexOf(oldText);
-    if (idx !== -1) {
-      const secondIdx = content.indexOf(oldText, idx + 1);
-      if (secondIdx === -1) {
-        return { start: idx, end: idx + oldText.length, newText, editIndex };
-      }
-      // Exact match found but not unique — do NOT fall through to ellipsis
+  if (oldText.length === 0) {
+    throw new Error(`edits[${editIndex}].oldText must not be empty.`);
+  }
+
+  // 1. Exact match
+  const idx = content.indexOf(oldText);
+  if (idx !== -1) {
+    const secondIdx = content.indexOf(oldText, idx + 1);
+    if (secondIdx !== -1) {
       throw new Error(
         `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
         `The text must be unique. Provide more context to make it unique.`,
       );
     }
+    return { start: idx, end: idx + oldText.length, newText, editIndex };
   }
 
-  // Ellipsis fallback: split on "..." lines into segments
+  // 2. Normalized (fuzzy) match — tolerates trailing whitespace, smart quotes, Unicode dashes
+  const fuzzyMatch = fuzzyFindText(content, oldText);
+  if (fuzzyMatch.found) {
+    const occurrences = countOccurrences(content, oldText);
+    if (occurrences > 1) {
+      throw new Error(
+        `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
+        `The text must be unique. Provide more context to make it unique.`,
+      );
+    }
+    return {
+      start: fuzzyMatch.index,
+      end: fuzzyMatch.index + fuzzyMatch.matchLength,
+      newText,
+      editIndex,
+    };
+  }
+
+  // 3. Distance (Levenshtein) match — tolerates small typos
+  const distanceMatch = findBestLineMatch(content, oldText);
+  if (distanceMatch.found) {
+    return {
+      start: distanceMatch.start,
+      end: distanceMatch.end,
+      newText,
+      editIndex,
+    };
+  }
+  if (distanceMatch.ambiguous) {
+    throw new Error(
+      `Found multiple similar regions for edits[${editIndex}]. ` +
+      `Provide more context to make the region unique.`,
+    );
+  }
+
+  // 4. Ellipsis — split on "..." lines into anchored segments
   const lines = oldText.split("\n");
   const ellipsisIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -108,7 +143,6 @@ function resolveEdit(
   }
 
   if (ellipsisIndices.length > 0) {
-    // Collect all non-ellipsis segments
     const segments: string[] = [];
     let prevIdx = -1;
     for (const ei of ellipsisIndices) {
@@ -119,10 +153,11 @@ function resolveEdit(
     return resolveMultiSegmentEdit(content, segments, newText, editIndex);
   }
 
-  // Not found
-  return resolveExactEdit(content, oldText, newText, editIndex);
+  throw new Error(
+    `Could not find oldText for edits[${editIndex}]. ` +
+    `The text must match exactly including all whitespace and newlines.`,
+  );
 }
-
 
 function resolveMultiSegmentEdit(
   content: string,
@@ -130,13 +165,7 @@ function resolveMultiSegmentEdit(
   newText: string,
   editIndex: number,
 ): ResolvedEdit {
-  if (segments.length === 0) {
-    // All `...` — replace entire file
-    return { start: 0, end: content.length, newText, editIndex };
-  }
-  if (segments.length === 1) {
-    return resolveExactEdit(content, segments[0], newText, editIndex);
-  }
+  // segments always has ≥ 2 entries (before first ... + after last ..., even if empty strings)
   if (segments.length === 2) {
     return resolveContextEdit(content, segments[0], segments[1], newText, editIndex);
   }
@@ -215,6 +244,7 @@ function resolveMultiSegmentEdit(
     editIndex,
   };
 }
+
 function resolveContextEdit(
   content: string,
   contextBefore: string,
@@ -222,9 +252,6 @@ function resolveContextEdit(
   newText: string,
   editIndex: number,
 ): ResolvedEdit {
-  // Region to replace is [start_of_prefix, end_of_suffix) — the entire oldText block.
-  // The prefix and suffix are part of the replaced region, not kept context markers.
-
   const beforePositions =
     contextBefore.length === 0
       ? [0]
@@ -271,70 +298,6 @@ function resolveContextEdit(
     newText,
     editIndex,
   };
-}
-
-function resolveExactEdit(
-  content: string,
-  oldText: string,
-  newText: string,
-  editIndex: number,
-): ResolvedEdit {
-  if (oldText.length === 0) {
-    throw new Error(`edits[${editIndex}].oldText must not be empty.`);
-  }
-
-  // Try exact match first
-  const idx = content.indexOf(oldText);
-  if (idx !== -1) {
-    const secondIdx = content.indexOf(oldText, idx + 1);
-    if (secondIdx === -1) {
-      return { start: idx, end: idx + oldText.length, newText, editIndex };
-    }
-    throw new Error(
-      `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
-      `The text must be unique. Provide more context to make it unique, or use ... to span a large region.`,
-    );
-  }
-
-  // Try normalized match
-  const match = fuzzyFindText(content, oldText);
-  if (match.found) {
-    const occurrences = countOccurrences(content, oldText);
-    if (occurrences > 1) {
-      throw new Error(
-        `Found multiple occurrences of oldText for edits[${editIndex}]. ` +
-        `The text must be unique. Provide more context to make it unique, or use ... to span a large region.`,
-      );
-    }
-    return {
-      start: match.index,
-      end: match.index + match.matchLength,
-      newText,
-      editIndex,
-    };
-  }
-
-  // Try distance-based match
-  const distanceMatch = findBestLineMatch(content, oldText);
-  if (distanceMatch.found) {
-    return {
-      start: distanceMatch.start,
-      end: distanceMatch.end,
-      newText,
-      editIndex,
-    };
-  }
-  if (distanceMatch.ambiguous) {
-    throw new Error(
-      `Found multiple similar regions for edits[${editIndex}]. ` +
-      `Provide more context to make the region unique.`,
-    );
-  }
-
-  throw new Error(
-    `Could not find oldText for edits[${editIndex}]. ` +
-    `The text must match exactly including all whitespace and newlines.`,
-  );
 }
 
 // ── Validate non-overlapping regions ───────────────────────
