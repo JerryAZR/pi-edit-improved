@@ -39,43 +39,104 @@ Additional features:
 - Unified diff in both model response and TUI card
 
 ---
+## What we tried, and how each failed
+
+We iterated through three schemas. Each introduced a different class of model error.
+
+### Attempt 1: Explicit context fields (`contextBefore`, `contextAfter`)
+
+```json
+{
+  "contextBefore": "function setup() {\n  // init\n",
+  "contextAfter": "  return result;\n}\n",
+  "newText": "  // added logic\n"
+}
+```
+
+The thinking: separate "what anchors the region" from "what to put there".
+
+**How models broke it:**
+- **Deleted context lines.** The model would put `"  // init\n"` in `contextBefore` but omit it from `newText`, not realizing the context is part of the *replaced* region. The line disappeared.
+- **Duplicated context lines.** Conversely, the model would include the context lines in `newText` as well, producing `"  // init\n  // added logic\n"` — the boundary appeared twice.
+- **Boundary confusion.** Models struggled to decide whether the line after `contextAfter` should be the first line of `newText` or the first line kept outside the edit. The conceptual gap between "what's replaced" and "what's new" was too wide.
+- **Context/newText mix-ups.** Models sometimes put the replacement text into `contextAfter`, or included unchanged lines in `newText` that were already covered by the context.
+
+### Attempt 2: Tuple form (`[contextBefore, newText, contextAfter]`)
+
+Same idea, positional syntax:
+
+```json
+[
+  "function setup() {\n  // init\n",
+  "  // added logic\n",
+  "  return result;\n}\n"
+]
+```
+
+**How models broke it:** All the same failures as Attempt 1, plus positional confusion — models would swap slots, put `newText` in position 1, or cram everything into position 2. The array syntax amplified the boundary confusion.
+
+### Attempt 3: `{ oldText, newText }` with `...` abbreviation (final)
+
+Returned to the familiar exact-text replacement schema:
+
+```json
+{
+  "oldText": "function setup() {\n  // init\n...\n  return result;\n}\n",
+  "newText": "function setup() {\n  // init\n  // added logic\n  return result;\n}\n"
+}
+```
+
+The `...` on its own line acts as an ellipsis: everything before it and after it are matched as anchors, then the entire block between them is replaced. The familiar `{ oldText, newText }` shape stays.
+
+**How models broke it:** They didn't break — they just ignored the feature. Models kept sending the full `oldText` verbatim. The tool included a tip (`"tip: use '...' in oldText to abbreviate large blocks"`) in success messages, fuzzy matching to tolerate whitespace/Unicode differences, and Levenshtein distance matching for small typos — all technically correct. But the model almost never used `...`.
+
+---
 
 ## What we learned
 
 ### What worked
 
-- **The implementation is correct.** The matching algorithm handles edge cases (empty segments, BOF/EOF, ambiguous regions, overlapping candidates) and passes 102 tests.
-- **Exact + fuzzy + distance fallback is genuinely useful.** Models don't need to get pristine whitespace or Unicode right — the tool recovers gracefully.
-- **Code quality improved through iteration.** The resolution cascade was refactored from a convoluted three-function dispatch into a clean flat pipeline; dead code and duplicate normalization were eliminated.
+- **Fuzzy matching is genuinely useful.** Stripping trailing whitespace and normalizing Unicode means models don't fail on invisible formatting differences.
+- **Distance matching catches real typos.** The 5% Levenshtein threshold recovers when the model drops a line or misspells a variable.
+- **The implementation is sound.** The matching algorithm handles empty segments, BOF/EOF, ambiguous regions, and overlapping candidates correctly. 102 tests pass.
 
-### What didn't work
+### What didn't work — the core issue across all three attempts
 
-**Models rarely use `...`.** Despite the feature being documented in the tool description, model guidelines, and even a tip in the success message (*"tip: use '...' in oldText to abbreviate large blocks"*), the model almost always sends the full `oldText` verbatim.
+**Explicit context fields make models worse at boundaries.** Splitting "what finds the region" from "what to put there" creates a mental gap that models systematically fill by either deleting or duplicating the boundary lines. The failure mode (silent data loss) is worse than the token waste it aimed to solve.
+
+**Opt‑in token shortcuts aren't adopted.** The `...` abbreviation was documented, described in tool guidelines, and nudged in success messages — models still send the full text. The familiar `{ oldText, newText }` shape reduces errors but the model never reaches for the shortcut.
 
 Possible reasons:
-- **Familiarity bias.** Models are heavily trained on `{ oldText, newText }` schemas and default to copying blocks exactly. Introducing an opt‑in variation requires the model to consciously switch strategies, which it rarely does unprompted.
-- **Prompt description isn't enough.** A paragraph in the tool description competes with hundreds of other instructions. The model doesn't internalize a feature it can choose not to use.
-- **The cost of getting it wrong is high.** An ellipsis edit that fails (ambiguous context, not found) is more frustrating than a successful but verbose exact edit. Models may conservatively avoid the risk.
-- **Token pressure isn't felt at edit time.** The model doesn't have a feedback loop that says "your last edit was 200 tokens, 180 of which were unchanged lines." Without that signal, verbosity is invisible.
+- **Familiarity bias.** Models are heavily trained on `{ oldText, newText }`. An opt‑in variation requires conscious strategy switching.
+- **Conservative defaults.** An ellipsis edit that fails is worse than a verbose edit that succeeds. The model avoids risk.
+- **No token‑cost feedback.** The model doesn't see the cost of its verbose `oldText`. Without that signal, verbosity is invisible.
+- **Prompt descriptions compete for attention.** A paragraph among dozens of tool instructions can't override ingrained behavior.
 
 ### Key takeaway
 
-Opt‑in shortcuts for token efficiency don't work reliably with current models. The model needs either:
-- A **forced short schema** (hash anchors, diffs) where verbosity is impossible, or
-- **Runtime feedback** that trains the model to use the shortcut (e.g., a warning when `oldText` > N lines, or truncation of verbose `oldText` in conversation history).
+Three schemas, three failure modes:
+1. **Explicit context fields** → models delete or duplicate boundary lines
+2. **Tuple form** → same boundary issues, plus positional confusion
+3. **`...` abbreviation** → models ignore the shortcut, keep sending full text
 
-An opt‑in `...` shortcut in a voluntary‑verbosity schema doesn't bridge that gap.
+For an edit schema to be both token‑efficient and model‑safe, it must either:
+- **Force efficiency structurally** (hash anchors, diffs) where verbosity is impossible, or
+- **Provide runtime feedback** (warnings, truncated history, fine‑tuning) that make the cost of verbosity visible to the model.
+
+An opt‑in shortcut in a voluntary‑verbosity schema doesn't bridge that gap. Context‑field schemas introduce boundary errors that are worse than the token waste they solve.
 
 ---
 
 ## Why we're archiving
 
-This project was an experiment with a clear hypothesis. The hypothesis failed — models don't adopt the shortcut. The implementation served its purpose as a testbed for ideas (fuzzy matching, distance matching, ellipsis resolution) and contributed to understanding what does and doesn't work for coding agent editing.
+This project was an experiment with a clear hypothesis: models will use a token‑efficient edit schema. We tried three approaches. All three failed — each differently.
+
+Each attempt taught us something useful about model behavior around edit boundaries and token efficiency, but none produced a reliable improvement over the baseline `{ oldText, newText }` schema.
 
 We're archiving rather than deleting because:
-- The codebase is a clean reference for anyone exploring edit tool design
-- The test suite covers edge cases that are easy to miss (multi-segment DP, BOF/EOF, ambiguous context)
-- The retrospective may save others from running the same experiment
+- The codebase is a clean reference for edit tool design
+- The test suite covers meaningful edge cases (multi‑segment DP, BOF/EOF, ambiguous context, Unicode normalization)
+- The retrospective across all three schema attempts may save others from running the same experiments
 
 ---
 
