@@ -94,13 +94,9 @@ The `...` on its own line acts as an ellipsis: everything before it and after it
 
 ## What we learned
 
-### What worked
+The only thing we can say with confidence — because we observed it empirically in test sessions — is how models behave under each schema:
 
-- **Fuzzy matching is genuinely useful.** Stripping trailing whitespace and normalizing Unicode means models don't fail on invisible formatting differences.
-- **Distance matching catches real typos.** The 5% Levenshtein threshold recovers when the model drops a line or misspells a variable.
-- **The implementation is sound.** The matching algorithm handles empty segments, BOF/EOF, ambiguous regions, and overlapping candidates correctly. 102 tests pass.
-
-### What didn't work — the core issue across all three attempts
+### What failed (observed)
 
 **Explicit context fields make models worse at boundaries.** Splitting "what finds the region" from "what to put there" creates a mental gap that models systematically fill by either deleting or duplicating the boundary lines. The failure mode (silent data loss) is worse than the token waste it aimed to solve.
 
@@ -111,6 +107,10 @@ Possible reasons:
 - **Conservative defaults.** An ellipsis edit that fails is worse than a verbose edit that succeeds. The model avoids risk.
 - **No token‑cost feedback.** The model doesn't see the cost of its verbose `oldText`. Without that signal, verbosity is invisible.
 - **Prompt descriptions compete for attention.** A paragraph among dozens of tool instructions can't override ingrained behavior.
+
+### What we can't claim
+
+We added fuzzy matching (copied from pi's built-in edit) and distance-based Levenshtein matching. These features are implemented and tested, but we never A/B compared them against a baseline without them. We don't know whether they improve edit success rates in practice.
 
 ### Key takeaway
 
@@ -131,11 +131,8 @@ An opt‑in shortcut in a voluntary‑verbosity schema doesn't bridge that gap. 
 
 This project was an experiment with a clear hypothesis: models will use a token‑efficient edit schema. We tried three approaches. All three failed — each differently.
 
-Each attempt taught us something useful about model behavior around edit boundaries and token efficiency, but none produced a reliable improvement over the baseline `{ oldText, newText }` schema.
-
 We're archiving rather than deleting because:
-- The codebase is a clean reference for edit tool design
-- The test suite covers meaningful edge cases (multi‑segment DP, BOF/EOF, ambiguous context, Unicode normalization)
+- The test suite covers edge cases that were hard to get right (multi‑segment DP, BOF/EOF, ambiguous context, Unicode normalization)
 - The retrospective across all three schema attempts may save others from running the same experiments
 
 ---
